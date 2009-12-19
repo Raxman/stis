@@ -1,0 +1,56 @@
+    SQUID Traffic Inspection System
+
+
+    Файлы STIS и права доступа
+-rw-r--r--  stis.conf   - файл конфигурации STIS
+-rwxr-xr-x  stis        - perl скрипт производит чтение из pipe-канала
+-rwxr-xr-x  stis_auth   - perl скрипт авторизации
+-rwxr-xr-x  stisbackup  - shell скрипт выполняющий резервное копирование базы данных
+-rwxr-xr-x  stisarchive - shell скрипт производит архивирование логов из базы данных
+-rw-r--r--  php/*       - WEB интерфейс STIS
+
+
+    Установка STIS
+
+1. Распакуйте архив.
+   tar -zxf stis-xx.tar.gz
+
+2. Переместите файлы stis, stis.conf, stis_auth в папку, куда установлен SQUID.
+
+3. Настройка SQUID для работы с nsca авторизацией.
+   В конфигурационный файл /etc/squid/squid.conf, добавьте следующие строки:
+
+   auth_param basic program /etc/squid/stis_auth
+   auth_param basic children 5
+   auth_param basic realm Internet authentication:
+   auth_param basic credentialsttl 1 hours
+
+4. Редактируем файл службы SQUID, /etc/rc.d/init.d/squid.
+   Добавьте следующую строку, в функцию 'start', перед запуском SQUID демона
+
+   /var/log/squid/access.log < /var/log/squid/stis &
+
+   Например в RedHat, добавляем перед строкой:
+   $SQUID $SQUID_OPTS 2> /dev/null
+
+5. Удалите лог файл access.log из папки /var/log/squid и создайте вместо него pipe-канал.
+   mkfifo /var/log/squid/access.log
+
+6. Создание базы данных STIS в MYSQL
+   Для создания базы данных, из папки ./stis-0.1/mysql выполните следующую команду
+   mysql < stis.sql
+
+7. Переместите stisbackup в папку /etc/cron.daily
+
+8. Переместите stisarchive в папку /etc/cron.monthly
+
+9. Создайте папки backup и archive в /var/log/squid
+
+10.Для работы WEB интерфейса создайте папку stis в /usr/www/html (в RedHat) и 
+   переместите туда все файлы из папки ./stis-0.1/php.
+   По умолчанию имя пользователя администратора: admin, пароль: admin.
+
+11.Настройка Apache
+   Добавьте в httpd.conf следующую строку, для вывода всех страниц по умолчанию в заданной кодировке:
+   AddDefaultCharset KOI8-R
+

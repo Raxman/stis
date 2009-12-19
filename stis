@@ -1,0 +1,208 @@
+#!/usr/bin/perl
+
+#   SQUID Traffic Inspection System
+#   version 0.1.2 2007/10/05
+#   stis
+#   
+#   
+
+use DBI;
+
+$conf_file='/etc/squid/stis.conf';
+
+open (CONF, "$conf_file");
+while ($conffile = <CONF>) {
+    ($param, $value) = split('=', $conffile);
+    $value =~ s/\n//g;
+    if ($param eq "mysql_user") {
+        $mysqluser=$value;
+    }
+    if ($param eq "mysql_password") {
+        $mysqlpass=$value;
+    }
+    if ($param eq "mysql_host") {
+        $mysqlhost=$value;
+    }
+    if ($param eq "mysql_port") {
+        $mysqlport=$value;
+    }
+    if ($param eq "mysql_database") {
+        $mysqldatabase=$value;
+    }
+    if ($param eq "cache_access_temp_log") {
+        $accesstemp=$value;
+    }
+    if ($param eq "log_not_dash") {
+        $lognotdash=$value;
+    }
+    if ($param eq "log_not_http_code") {
+        $lognothttpcode=$value;
+    }
+    if ($param eq "log_not_squid_denied") {
+        $lognotsquiddenied=$value;
+    }
+}
+close (CONF);
+
+$mysqltablelog='logaccess';
+$checkinterval=2;
+
+
+start:
+
+$DBSTAT=0;
+
+$dbh = DBI->connect("DBI:mysql:$mysqldatabase:$mysqlhost:$mysqlport",$mysqluser,$mysqlpass,
+                    {AutoCommit=>1,PrintError=>1,RaiseError=>0})||print $DBSTAT=1;
+
+if ($DBSTAT eq 0) {
+    if (@ARGV eq 0) {
+        $emptytemp=`wc -l $accesstemp | gawk '{ print \$1 }'`;
+        chop $emptytemp;
+        if ($emptytemp ne 0) {
+            system("$0 $accesstemp && cat > $accesstemp /dev/null &");
+        }
+    }
+
+    $sth = $dbh->prepare("insert into $mysqltablelog(date,time,response,clientip,squidcode,httpcode,bytes,method,url,user,hierarchy,requestip,content,type)values(?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+
+    while(<>) {
+        chop;
+        @lines = split(' ');
+        @timestamp = split('\.', $lines[0]);
+
+        ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdat) = gmtime($timestamp[0]);
+        $date = sprintf("%04d-%02d-%02d",$year+1900,$mon+1,$mday);
+        $time = sprintf("%02d:%02d:%02d",$hour,$min,$sec);
+
+        $response = $lines[1];
+        $clientip = $lines[2];
+
+        @code = split('/', $lines[3]);
+        $squidcode = $code[0];
+        $httpcode = $code[1];
+
+        $bytes = $lines[4];
+        $method = $lines[5];
+        $url = $lines[6];
+
+        $user = $lines[7];
+
+        @request = split('/', $lines[8]);
+        $hierarchy = $request[0];
+        $requestip = $request[1];
+
+        @mime = split('/', $lines[9]);
+        $content = $mime[0];
+        $type = $mime[1];
+
+        if ($lognotdash eq "on") {
+            if ($user eq "-") {
+                $user = "";
+            }
+            if ($requestip eq "-") {
+                $requestip = "";
+            }
+            if ($content eq "-") {
+                $content = "";
+            }
+        }
+
+
+
+        if ($lognothttpcode eq "off") {
+            $att_http_code = 'on';
+        }
+
+        if ($lognothttpcode ne "off") {
+            @arrayhttpcode = split(', ', $lognothttpcode);
+            $i = 0;
+            $att_http_code = 'on';
+            CYCLE_1:
+            while ( $i lt scalar(@arrayhttpcode) ) {
+                if ($httpcode =~ /$arrayhttpcode[$i]/) {
+                    $att_http_code = 'off';
+                    last CYCLE_1;
+                }
+                $i++;
+            }
+        }
+
+        $att_squid_code = 'on';
+
+        if ($lognotsquiddenied eq "on") {
+            if ($squidcode eq "TCP_DENIED") {
+                $att_squid_code = 'off';
+            } else {
+                $att_squid_code = 'on';
+            }
+        }
+        if (($att_http_code eq "on")&&($att_squid_code eq "on")) {
+            $sth->execute($date,$time,$response,$clientip,$squidcode,$httpcode,$bytes,$method,$url,$user,$hierarchy,$requestip,$content,$type)||print $DBSTAT=1;
+
+            if ($DBSTAT eq 1) {
+                last
+            }
+
+            $host=$clientip;
+
+            if (($lines[7] ne "-")) {
+                $log_db = 'logusers';
+                $log_col = 'user';
+            }
+            if (($lines[7] eq "-")) {
+                $log_db = 'loghosts';
+                $log_col = 'host';
+            }
+            $select = "select * from $log_db where $log_col='${$log_col}' and date='$date'";
+            $rows_affected=$dbh->do($select);
+            if ($rows_affected < 1) {
+                $sth = $dbh->prepare("insert into $log_db(date,$log_col,loadbytes,cachebytes)values(?,?,?,?)");
+                $sth->execute($date,${$log_col},0,0);
+            }
+            if (($squidcode eq "TCP_HIT")||($squidcode eq "TCP_REFRESH_HIT")||($squidcode eq "TCP_IMS_HIT")||($squidcode eq "TCP_MEM_HIT")) {
+                $att_bytes='cachebytes';
+            } else {
+                $att_bytes='loadbytes';
+            }
+            $rows_affected=$dbh->do("update $log_db set $att_bytes=$att_bytes+$bytes where $log_col='${$log_col}' and date='$date'");
+        }
+    }
+
+    $dbh->disconnect;
+}
+
+
+if ($DBSTAT eq 1) {
+    if (@ARGV eq 0) {
+        while (<>) {
+            open (LOGCACHE, ">>$accesstemp");
+            print LOGCACHE $_;
+            close LOGCACHE;
+            ($chsec,$chmin,$chhour,$chmday,$chmon,$chyear,$chwday,$chyday,$chisdat) = gmtime();
+            while ($chmin > $checkinterval) {
+                $chmin=$chmin-$checkinterval;
+            }
+            if (($checkinterval == $chmin)&&($CHECKVAL eq "on")) {
+                $DBCHECK=0;
+                $dbh = DBI->connect("DBI:mysql:$mysqldatabase:$mysqlhost:$mysqlport",$mysqluser,$mysqlpass,
+                {AutoCommit=>1,PrintError=>1,RaiseError=>0})||print $DBCHECK=1;
+                if ($DBCHECK eq 0) {
+                    $dbh->disconnect;
+
+#                    system("$path_prog/$prog $accesstemp && cat > $accesstemp /dev/null &");
+                    $STARTVAL=on;
+                    last;
+                }
+                $CHECKVAL=off;
+            }
+            if ($checkinterval != $chmin) {
+                $CHECKVAL=on;
+            }
+        }
+    }
+}
+if ($STARTVAL eq "on") {
+    goto start;
+} 
+

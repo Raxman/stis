@@ -1,0 +1,37 @@
+#!/bin/sh
+
+#   SQUID Traffic Inspection System
+#   version 0.1.2 2007/10/05
+#   stisarchive
+#   Архивирование логов из базы данных MySQL по месяцам.
+#   Месяц архивирования относительно текущей даты указывается в log_period_month. 
+#   Для архивирования конкретного месяца необходимо передать 2 параметра: 
+#   1 параметр - год, 2 параметр - месяц.
+
+conf_file='/etc/squid/stis.conf';
+. $conf_file
+
+archive_tables='logaccess logusers loghosts'
+
+datetime=`date '+%Y%m%d_%H%M%S'`
+
+if [ $# -eq 0 ]; then
+    datearchive=`date -d "$log_period_month months ago" +%Y-%m`
+else
+    datearchive=$1-$2
+fi
+
+for table in $archive_tables
+do
+    filename=archive_$table\_$datearchive
+    sqlname=$filename\.sql
+    archivename=$filename\.tar.gz
+
+    mysqldump -h $mysql_host -P $mysql_port -u $mysql_user -p$mysql_password $mysql_database $table -t -c -e "--where=date like '$datearchive-%'" > $path_archive/$sqlname
+    tar -zcf $path_archive/$archivename --backup --suffix="_$datetime" -C $path_archive $sqlname
+    rm -f $path_archive/$sqlname
+    mysql -h $mysql_host -P $mysql_port -u $mysql_user -p$mysql_password $mysql_database "--exec=delete from $table where date like '$datearchive-%'"
+
+done
+
+mysqlcheck -o -h $mysql_host -P $mysql_port -u $mysql_user -p$mysql_password $mysql_database

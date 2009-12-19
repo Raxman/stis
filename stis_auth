@@ -1,0 +1,89 @@
+#!/usr/bin/perl
+
+#   SQUID Traffic Inspection System
+#   version 0.1.2 2007/10/05
+#   stis_auth
+#   
+#   
+
+use DBI;
+
+$conf_file='/etc/squid/stis.conf';
+
+open (CONF, "$conf_file");
+while ($conffile = <CONF>) {
+    ($param, $value) = split('=', $conffile);
+    $value =~ s/\n//g;
+    if ($param eq "mysql_user") {
+        $mysqluser=$value;
+    }
+    if ($param eq "mysql_password") {
+        $mysqlpass=$value;
+    }
+    if ($param eq "mysql_host") {
+        $mysqlhost=$value;
+    }
+    if ($param eq "mysql_port") {
+        $mysqlport=$value;
+    }
+    if ($param eq "mysql_database") {
+        $mysqldatabase=$value;
+    }
+}
+close (CONF);
+
+$|=1;
+
+$RETVAL=0;
+
+$dbh = DBI->connect("DBI:mysql:$mysqldatabase:$mysqlhost:$mysqlport",$mysqluser,$mysqlpass,
+                    {AutoCommit=>1,PrintError=>1,RaiseError=>0})||print $RETVAL=1;
+
+if ($RETVAL eq 0) {
+    while (<STDIN>) {
+        chomp;
+        @auth = split(' ');
+        $user = $auth[0];
+        $password = $auth[1];
+
+        $sth = $dbh->prepare("select user from users where user='$user' and password=password('$password')");
+        $sth->execute;
+        $userckeck=$sth->fetchrow_array;
+        if ($userckeck eq "") {
+            print "ERR\n";
+        } else {
+            $sth = $dbh->prepare("select sum(loadbytes)+sum(cachebytes) from logusers where date like date_format(now(), '%Y-%m-%') and user='$user'");
+            $sth->execute;
+            $monthbytesget=$sth->fetchrow_array;
+            $sth = $dbh->prepare("select maxmonthly from users where user='$user'");
+            $sth->execute;
+            $monthbytesmax=$sth->fetchrow_array;
+
+            if ($monthbytesmax eq 0) {
+                $sth = $dbh->prepare("select sum(loadbytes)+sum(cachebytes) from logusers where date like date_format(now(), '%Y-%m-%d') and user='$user'");
+                $sth->execute;
+                $daybytesget=$sth->fetchrow_array;
+                $sth = $dbh->prepare("select maxdaily from users where user='$user'");
+                $sth->execute;
+                $daybytesmax=$sth->fetchrow_array;
+
+                if ($daybytesmax eq 0) {
+                    print "OK\n";
+                } else {
+                    if ($daybytesmax > $daybytesget){
+                        print "OK\n";
+                    } else {
+                        print "ERR\n";
+                    }
+                }
+            } else {
+                if ($monthbytesmax > $monthbytesget){
+                    print "OK\n";
+                } else {
+                    print "ERR\n";
+                }
+            }
+        }
+    }
+}
+

@@ -1,0 +1,19 @@
+#!/bin/sh
+
+#   SQUID Traffic Inspection System
+#   version 0.1.2 2007/10/05
+#   stisbackup
+#   
+#   
+
+conf_file='/etc/squid/stis.conf';
+. $conf_file
+
+backup_tables='users departments logusers loghosts logaccess'
+
+mysqldump -h $mysql_host -P $mysql_port -u $mysql_user -p$mysql_password $mysql_database -d > $path_backup\/database_$mysql_database\.sql
+
+for table in $backup_tables
+do
+    mysqldump -h $mysql_host -P $mysql_port -u $mysql_user -p$mysql_password $mysql_database $table -t -c -e > $path_backup\/$table\.sql
+done
